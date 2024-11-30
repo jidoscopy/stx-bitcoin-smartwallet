@@ -140,3 +140,57 @@
             percentages
             (list u10 total-amount))
         (ok true)))
+
+(define-private (process-individual-payment
+    (recipient principal)
+    (percentage uint)
+    (total-amount uint))
+    (if (and (> percentage u0) (not (is-eq recipient tx-sender)))
+        (let
+            ((payment-amount (/ (* total-amount percentage) u100)))
+            (match (as-contract (stx-transfer? payment-amount tx-sender recipient))
+                success (ok true)
+                error (err error)))
+        (ok false)))
+;; Contract owner functions
+(define-public (set-minimum-lock-period (new-period uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (ok (var-set minimum-lock-period new-period))))
+
+(define-public (set-emergency-withdrawal-fee (new-fee uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (asserts! (<= new-fee u100) ERR_INVALID_AMOUNT)
+        (ok (var-set emergency-withdrawal-fee new-fee))))
+
+(define-public (update-block-height (new-height uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (ok (var-set current-block-height new-height))))
+
+;; Emergency contact functions
+(define-public (initiate-emergency-withdrawal (user principal))
+    (let
+        (
+            (savings-data (unwrap! (map-get? time-locked-savings user) ERR_NOT_AUTHORIZED))
+            (emergency-contact (unwrap! (get emergency-contact savings-data) ERR_NOT_AUTHORIZED))
+        )
+        (asserts! (is-eq tx-sender emergency-contact) ERR_NOT_AUTHORIZED)
+        (asserts! (get is-active savings-data) ERR_NOT_AUTHORIZED)
+        (asserts! (< (var-get current-block-height) (get unlock-height savings-data)) ERR_EMERGENCY_NOT_ACTIVE)
+        (emergency-withdraw-for user)))
+
+(define-private (emergency-withdraw-for (user principal))
+    (let
+        (
+            (savings-data (unwrap! (map-get? time-locked-savings user) ERR_NOT_AUTHORIZED))
+            (amount (get amount savings-data))
+            (fee-amount (/ (* amount (var-get emergency-withdrawal-fee)) u100))
+            (withdrawal-amount (- amount fee-amount))
+        )
+        (map-delete time-locked-savings user)
+        (as-contract (begin
+            (try! (stx-transfer? withdrawal-amount tx-sender user))
+            (stx-transfer? fee-amount tx-sender CONTRACT_OWNER)))))
+
