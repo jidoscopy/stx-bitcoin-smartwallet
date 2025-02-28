@@ -335,3 +335,124 @@
                 success (ok true)
                 error (err error)))
         (ok false)))
+
+
+;;  Multi-signature functions
+(define-public (setup-multi-sig (signers (list 10 principal)) (required-signatures uint))
+    (begin
+        (asserts! (> (len signers) u0) ERR_INVALID_RECIPIENT)
+        (asserts! (>= required-signatures u1) ERR_INSUFFICIENT_SIGNATURES)
+        (asserts! (<= required-signatures (len signers)) ERR_INSUFFICIENT_SIGNATURES)
+
+        (ok (map-set multi-sig-settings tx-sender
+            {
+                signers: signers,
+                required-signatures: required-signatures,
+                is-active: true
+            }))))
+
+(define-public (create-multi-sig-transaction (recipient principal) (amount uint) (memo (optional (buff 34))) (expiry-blocks uint))
+    (let
+        (
+            (tx-id (var-get transaction-counter))
+            (current-height (var-get current-block-height))
+            (settings (unwrap! (map-get? multi-sig-settings tx-sender) ERR_NOT_AUTHORIZED))
+            (expiry-height (+ current-height expiry-blocks))
+        )
+        ;; Check if multi-sig is active
+        (asserts! (get is-active settings) ERR_NOT_AUTHORIZED)
+
+        ;; Increment transaction counter
+        (var-set transaction-counter (+ tx-id u1))
+
+        ;; Create transaction with tx-sender as the first signer
+        (ok (map-set multi-sig-transactions
+            { tx-id: tx-id }
+            {
+                owner: tx-sender,
+                required-signatures: (get required-signatures settings),
+                signers: (get signers settings),
+                signatures: (list tx-sender),
+                recipient: recipient,
+                amount: amount,
+                memo: memo,
+                expiry-height: expiry-height,
+                executed: false
+            }))))
+
+(define-public (execute-multi-sig-transaction (tx-id uint))
+    (let
+        (
+            (tx-data (unwrap! (map-get? multi-sig-transactions { tx-id: tx-id }) ERR_NOT_AUTHORIZED))
+            (current-height (var-get current-block-height))
+            (owner (get owner tx-data))
+            (signatures (get signatures tx-data))
+            (required-signatures (get required-signatures tx-data))
+            (recipient (get recipient tx-data))
+            (amount (get amount tx-data))
+            (expiry-height (get expiry-height tx-data))
+        )
+        ;; Check if transaction has expired
+        (asserts! (< current-height expiry-height) ERR_INVALID_TIME)
+
+        ;; Check if already executed
+        (asserts! (not (get executed tx-data)) ERR_ALREADY_EXECUTED)
+
+        ;; Check if enough signatures
+        (asserts! (>= (len signatures) required-signatures) ERR_INSUFFICIENT_SIGNATURES)
+
+        ;; Check balance
+        (asserts! (>= (stx-get-balance owner) amount) ERR_INSUFFICIENT_BALANCE)
+
+        ;; Execute transaction
+        (try! (stx-transfer? amount owner recipient))
+
+        ;; Mark as executed
+        (ok (map-set multi-sig-transactions
+            { tx-id: tx-id }
+            (merge tx-data { executed: true })))))
+
+
+
+
+;; Contract owner functions
+(define-public (set-minimum-lock-period (new-period uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (ok (var-set minimum-lock-period new-period))))
+
+(define-public (set-emergency-withdrawal-fee (new-fee uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (asserts! (<= new-fee u100) ERR_INVALID_AMOUNT)
+        (ok (var-set emergency-withdrawal-fee new-fee))))
+
+(define-public (update-block-height (new-height uint))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (ok (var-set current-block-height new-height))))
+
+;; Emergency contact functions
+(define-public (initiate-emergency-withdrawal (user principal))
+    (let
+        (
+            (savings-data (unwrap! (map-get? time-locked-savings user) ERR_NOT_AUTHORIZED))
+            (emergency-contact (unwrap! (get emergency-contact savings-data) ERR_NOT_AUTHORIZED))
+        )
+        (asserts! (is-eq tx-sender emergency-contact) ERR_NOT_AUTHORIZED)
+        (asserts! (get is-active savings-data) ERR_NOT_AUTHORIZED)
+        (asserts! (< (var-get current-block-height) (get unlock-height savings-data)) ERR_EMERGENCY_NOT_ACTIVE)
+        (emergency-withdraw-for user)))
+
+(define-private (emergency-withdraw-for (user principal))
+    (let
+        (
+            (savings-data (unwrap! (map-get? time-locked-savings user) ERR_NOT_AUTHORIZED))
+            (amount (get amount savings-data))
+            (fee-amount (/ (* amount (var-get emergency-withdrawal-fee)) u100))
+            (withdrawal-amount (- amount fee-amount))
+        )
+        (map-delete time-locked-savings user)
+        (as-contract (begin
+            (try! (stx-transfer? withdrawal-amount tx-sender user))
+            (stx-transfer? fee-amount tx-sender CONTRACT_OWNER)))))
