@@ -1,0 +1,18 @@
+---
+id: 0
+name: Testnet deployment
+network: testnet
+stacks-node: "https://stacks-node-api.testnet.stacks.co"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: stx-bitcoin-smartwallet
+            expected-sender: ST1RQN2MZSK7DKEXWGJJRYP44ETJY6Z8C9GFNMDZ6
+            cost: 17121
+            path: contracts/stx-bitcoin-smartwallet.clar
+            anchor-block-only: true
+            clarity-version: 1
+      epoch: "2.05"
