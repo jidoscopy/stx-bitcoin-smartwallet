@@ -1,0 +1,18 @@
+---
+id: 0
+name: Mainnet deployment
+network: mainnet
+stacks-node: "https://stacks-node-api.mainnet.stacks.co"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoin.blockstack.com:8332"
+plan:
+  batches:
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: stx-bitcoin-smartwallet
+            expected-sender: SP365KA6M5WCAVD01Z9802R5B1WK307064KZ30RSW
+            cost: 17121
+            path: contracts/stx-bitcoin-smartwallet.clar
+            anchor-block-only: true
+            clarity-version: 1
+      epoch: "2.05"
